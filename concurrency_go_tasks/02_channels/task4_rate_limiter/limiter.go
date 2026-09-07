@@ -11,38 +11,47 @@ type Limiter struct {
 	once   sync.Once
 }
 
+var limit int = 5
+
 func NewLimiter() *Limiter {
-	l := &Limiter{
-		tokens: make(chan struct{}, 5),
+	limiter := &Limiter{
+		tokens: make(chan struct{}, limit),
 		stop:   make(chan struct{}),
 	}
-	for i := 0; i < 5; i++ {
-		l.tokens <- struct{}{}
+	for range limit {
+		limiter.tokens <- struct{}{}
 	}
 
-	ticker := time.NewTicker(time.Second / 5)
 	go func() {
+		delta := time.Second / time.Duration(limit)
+		ticker := time.NewTicker(delta)
+		defer ticker.Stop()
 		for {
 			select {
+			case <-limiter.stop:
+				return
 			case <-ticker.C:
 				select {
-				case l.tokens <- struct{}{}:
+				case limiter.tokens <- struct{}{}:
 				default:
 				}
-			case <-l.stop:
-				ticker.Stop()
-				close(l.tokens)
-				return
 			}
 		}
 	}()
-	return l
+
+	return limiter
 }
 
 func (l *Limiter) Allow() bool {
 	select {
-	case _, ok := <-l.tokens:
-		return ok
+	case <-l.stop:
+		return false
+	default:
+	}
+
+	select {
+	case <-l.tokens:
+		return true
 	default:
 		return false
 	}
